@@ -59,3 +59,5 @@
 */
 
 auto usearch_global(char * cmdline, char * progheader) -> void;
+auto usearch_global_server(char * cmdline, char * progheader) -> void;
+auto search_prep(char * cmdline, char * progheader) -> void;

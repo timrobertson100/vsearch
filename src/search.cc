@@ -112,6 +112,7 @@ static FILE * fp_tsegout = nullptr;
 
 static int count_matched = 0;
 static int count_notmatched = 0;
+static bool db_open = false;
 
 auto search_output_results(int hit_count,
                            struct hit * hits,
@@ -373,6 +374,7 @@ auto search_thread_run(int64_t t) -> void
 {
   while (true)
     {
+
       xpthread_mutex_lock(&mutex_input);
 
       if (fastx_next(query_fastx_h,
@@ -692,10 +694,14 @@ auto search_prep(char * cmdline, char * progheader) -> void
 
   if (is_udb)
     {
-      udb_read(opt_db, true, true);
-      results_show_samheader(fp_samout, cmdline, opt_db);
-      show_rusage();
-      seqcount = db_getsequencecount();
+      if (!db_open)  // TODO: this is a hack
+      {
+        udb_read(opt_db, true, true);
+        results_show_samheader(fp_samout, cmdline, opt_db);
+        show_rusage();
+        seqcount = db_getsequencecount();
+        db_open = true;
+      } 
     }
   else
     {
@@ -733,12 +739,13 @@ auto search_prep(char * cmdline, char * progheader) -> void
 }
 
 
-auto search_done() -> void
+auto search_done(bool skipCloseDB) -> void
 {
   /* clean up, global */
-
-  dbindex_free();
-  db_free();
+  if (!skipCloseDB) {
+    dbindex_free();
+    db_free();
+  }
 
   if (opt_lcaout)
     {
@@ -787,8 +794,8 @@ auto search_done() -> void
   show_rusage();
 }
 
-
-auto usearch_global(char * cmdline, char * progheader) -> void
+// Modification to allow the fastx option and reusing resources
+auto usearch_global(char * cmdline, char * progheader, char * fastx, bool skipCloseDB) -> void
 {
   search_prep(cmdline, progheader);
 
@@ -820,7 +827,9 @@ auto usearch_global(char * cmdline, char * progheader) -> void
   qmatches_abundance = 0;
   queries = 0;
   queries_abundance = 0;
-  query_fastx_h = fastx_open(opt_usearch_global);
+  
+  // Modification for server mode to avoid segment fault
+  query_fastx_h = fastx_open(fastx);
 
   /* allocate memory for thread info */
   si_plus = (struct searchinfo_s *) xmalloc(opt_threads *
@@ -988,5 +997,16 @@ auto usearch_global(char * cmdline, char * progheader) -> void
       fclose(fp_dbnotmatched);
     }
 
-  search_done();
+  search_done(skipCloseDB);
+  
+}
+
+auto usearch_global(char * cmdline, char * progheader) -> void
+{
+  usearch_global(cmdline, progheader, opt_usearch_global, false); // original behaviour
+}
+
+auto usearch_global_server(char * cmdline, char * progheader) -> void
+{
+  usearch_global(cmdline, progheader, opt_usearch_global_server, true);   // skips the udb opening
 }

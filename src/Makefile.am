@@ -183,4 +183,5 @@ userfields.cc \
 util.cc \
 utils/maps.cpp \
 utils/seqcmp.cc \
+mongoose.cc \
 vsearch.cc

@@ -57,7 +57,6 @@
   POSSIBILITY OF SUCH DAMAGE.
 
 */
-
 #include "vsearch.h"
 #include "allpairs.h"
 #include "chimera.h"
@@ -101,6 +100,7 @@
 #include <string.h>  // strcasecmp
 #include <vector>
 
+#include "mongoose.h" // basic webserver foir reusing in the global server mode
 
 /* options */
 
@@ -216,6 +216,7 @@ char * opt_udb2fasta;
 char * opt_udbinfo;
 char * opt_udbstats;
 char * opt_usearch_global;
+char * opt_usearch_global_server;
 char * opt_userout;
 double * opt_ee_cutoffs_values;
 double opt_abskew;
@@ -996,6 +997,7 @@ auto args_init(int argc, char ** argv, struct Parameters & parameters) -> void
   opt_udbstats = nullptr;
   opt_unoise_alpha = 2.0;
   opt_usearch_global = nullptr;
+  opt_usearch_global_server = nullptr;
   opt_userout = nullptr;
   opt_usersort = 0;
   opt_weak_id = 10.0;
@@ -1240,6 +1242,7 @@ auto args_init(int argc, char ** argv, struct Parameters & parameters) -> void
       option_udbstats,
       option_unoise_alpha,
       option_usearch_global,
+      option_usearch_global_server,
       option_userfields,
       option_userout,
       option_usersort,
@@ -1487,6 +1490,7 @@ auto args_init(int argc, char ** argv, struct Parameters & parameters) -> void
       {"udbstats",              required_argument, nullptr, 0 },
       {"unoise_alpha",          required_argument, nullptr, 0 },
       {"usearch_global",        required_argument, nullptr, 0 },
+      {"usearch_global_server", required_argument, nullptr, 0 },
       {"userfields",            required_argument, nullptr, 0 },
       {"userout",               required_argument, nullptr, 0 },
       {"usersort",              no_argument,       nullptr, 0 },
@@ -1533,6 +1537,10 @@ auto args_init(int argc, char ** argv, struct Parameters & parameters) -> void
 
         case option_usearch_global:
           opt_usearch_global = optarg;
+          break;
+
+        case option_usearch_global_server:
+          opt_usearch_global_server = optarg;
           break;
 
         case option_db:
@@ -2664,6 +2672,7 @@ auto args_init(int argc, char ** argv, struct Parameters & parameters) -> void
       option_udbinfo,
       option_udbstats,
       option_usearch_global,
+      option_usearch_global_server,
       option_v,
       option_version
     };
@@ -4511,6 +4520,101 @@ auto args_init(int argc, char ** argv, struct Parameters & parameters) -> void
         option_xsize,
         -1 },
 
+      { option_usearch_global_server,
+        option_alnout,
+        option_band,
+        option_biomout,
+        option_blast6out,
+        option_bzip2_decompress,
+        option_db,
+        option_dbmask,
+        option_dbmatched,
+        option_dbnotmatched,
+        option_fasta_width,
+        option_fastapairs,
+        option_fulldp,
+        option_gapext,
+        option_gapopen,
+        option_gzip_decompress,
+        option_hardmask,
+        option_hspw,
+        option_id,
+        option_iddef,
+        option_idprefix,
+        option_idsuffix,
+        option_label_suffix,
+        option_lca_cutoff,
+        option_lcaout,
+        option_leftjust,
+        option_lengthout,
+        option_log,
+        option_match,
+        option_matched,
+        option_maxaccepts,
+        option_maxdiffs,
+        option_maxgaps,
+        option_maxhits,
+        option_maxid,
+        option_maxqsize,
+        option_maxqt,
+        option_maxrejects,
+        option_maxseqlength,
+        option_maxsizeratio,
+        option_maxsl,
+        option_maxsubs,
+        option_mid,
+        option_mincols,
+        option_minhsp,
+        option_minqt,
+        option_minseqlength,
+        option_minsizeratio,
+        option_minsl,
+        option_mintsize,
+        option_minwordmatches,
+        option_mismatch,
+        option_mothur_shared_out,
+        option_no_progress,
+        option_notmatched,
+        option_notrunclabels,
+        option_otutabout,
+        option_output_no_hits,
+        option_pattern,
+        option_qmask,
+        option_qsegout,
+        option_query_cov,
+        option_quiet,
+        option_relabel,
+        option_relabel_keep,
+        option_relabel_md5,
+        option_relabel_self,
+        option_relabel_sha1,
+        option_rightjust,
+        option_rowlen,
+        option_samheader,
+        option_samout,
+        option_sample,
+        option_self,
+        option_selfid,
+        option_sizein,
+        option_sizeout,
+        option_slots,
+        option_strand,
+        option_target_cov,
+        option_threads,
+        option_top_hits_only,
+        option_tsegout,
+        option_uc,
+        option_uc_allhits,
+        option_userfields,
+        option_userout,
+        option_weak_id,
+        option_wordlength,
+        option_xdrop_nw,
+        option_xee,
+        option_xlength,
+        option_xsize,
+        -1 },
+
       { option_v,
         option_log,
         option_quiet,
@@ -4623,7 +4727,7 @@ auto args_init(int argc, char ** argv, struct Parameters & parameters) -> void
   if (opt_allpairs_global or opt_cluster_fast or opt_cluster_size or
       opt_cluster_smallmem or opt_cluster_unoise or opt_fastq_mergepairs or
       opt_fastx_mask or opt_maskfasta or opt_search_exact or opt_sintax or
-      opt_uchime_ref or opt_usearch_global)
+      opt_uchime_ref or opt_usearch_global or opt_usearch_global_server)
     {
       if (parameters.opt_threads == 0)
         {
@@ -4958,7 +5062,8 @@ auto args_init(int argc, char ** argv, struct Parameters & parameters) -> void
           parameters.opt_derep_prefix or
           opt_makeudb_usearch or
           opt_sintax or
-          opt_usearch_global)
+          opt_usearch_global or
+          opt_usearch_global_server)
         {
           opt_minseqlength = 32;
           parameters.opt_minseqlength = 32;
@@ -5351,6 +5456,7 @@ auto cmd_help(struct Parameters const & parameters) -> void {
           "Searching\n"
           "  --search_exact FILENAME     filename of queries for exact match search\n"
           "  --usearch_global FILENAME   filename of queries for global alignment search\n"
+          "  --usearch_global_server FILENAME filename of queries for global alignment search\n"
           " Data\n"
           "  --db FILENAME               name of UDB or FASTA database for search\n"
           " Parameters\n"
@@ -5549,8 +5655,10 @@ auto cmd_allpairs_global() -> void
 
 
 auto cmd_usearch_global() -> void
+
 {
   /* check options */
+
 
   if ((not opt_alnout) and (not opt_userout) and
       (not opt_uc) and (not opt_blast6out) and
@@ -5576,6 +5684,71 @@ auto cmd_usearch_global() -> void
   usearch_global(cmdline, progheader);
 }
 
+// Runs on each HTTP request
+auto ev_handler(struct mg_connection *c, int ev, void *ev_data) -> void
+{
+
+  if (ev == MG_EV_HTTP_MSG) {
+    struct mg_http_message *hm = (struct mg_http_message *) ev_data;
+    if (mg_match(hm->uri, mg_str("/api/time/get"), NULL)) {
+      mg_http_reply(c, 200, "", "{%m:%lu}\n", MG_ESC("time"), time(NULL));
+    } else if (mg_match(hm->uri, mg_str("/search"), NULL)) {
+      
+      // TODO: Global locking here. One request at a time is fine for POC.
+      
+      // Extract the "sequence" parameter from the query string and write it to a file
+      char sequence[1024] = {0}; 
+      mg_http_get_var(&hm->query, "sequence", sequence, sizeof(sequence));      
+      FILE *file = fopen(opt_usearch_global_server, "w+"); // replace content
+      if (file) {
+        fprintf(file, ">search\n%s", sequence);
+        fclose(file);      
+        usearch_global_server(cmdline, progheader);
+      } else {
+        mg_http_reply(c, 500, "", "{%m:%m}\n", MG_ESC("error"), MG_ESC("Unable to open file"));   
+      }
+      
+      // Return the output to the user
+      FILE *fileResult = fopen(opt_blast6out, "r");
+      if (fileResult) {
+        // Determine the file size
+        fseek(fileResult, 0, SEEK_END);
+        long file_size = ftell(fileResult);
+        fseek(fileResult, 0, SEEK_SET);
+        char *file_content = (char *)malloc(file_size + 1);
+        if (file_content) {
+          fread(file_content, 1, file_size, file);
+          file_content[file_size] = '\0'; // Null-terminate the string
+          fclose(fileResult);
+
+          mg_http_reply(c, 200, "Content-Type: text/html\r\n",
+                        "<pre>%s</pre>", file_content);        
+        
+          free(file_content);
+        }
+      } else {
+        fclose(fileResult);      
+        mg_http_reply(c, 500, "", "{%m:%m}\n", MG_ESC("error"), MG_ESC("Unable to open result file"));   
+      }
+
+    } else { 
+      mg_http_reply(c, 500, "", "{%m:%m}\n", MG_ESC("error"), MG_ESC("Unsupported URI")); 
+    }
+  }
+}
+
+auto cmd_usearch_global_server() -> void
+{
+   fprintf(stderr, "Starting web server\n");
+
+   struct mg_mgr mgr;  // Declare event manager
+   mg_mgr_init(&mgr);  // Initialise event manager
+   mg_http_listen(&mgr, "http://0.0.0.0:8000", ev_handler, NULL);  // Setup listener
+   for (;;) {          // infinite event loop
+      mg_mgr_poll(&mgr, 1000);
+   }    
+
+}
 
 auto cmd_search_exact() -> void
 {
@@ -5871,6 +6044,10 @@ auto main(int argc, char** argv) -> int
   else if (opt_usearch_global)
     {
       cmd_usearch_global();
+    }
+  else if (opt_usearch_global_server)
+    {
+      cmd_usearch_global_server();
     }
   else if (parameters.opt_sortbysize)
     {
