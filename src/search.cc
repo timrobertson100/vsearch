@@ -1001,12 +1001,12 @@ auto usearch_global(char * cmdline, char * progheader, char * fastx, bool skipCl
   
 }
 
-auto usearch_global(char * cmdline, char * progheader) -> void
+auto usearch_global(char * cmdline, char * progheader, char * opt_usearch_global) -> void
 {
   usearch_global(cmdline, progheader, opt_usearch_global, false); // original behaviour
 }
 
-auto usearch_global_server(char * cmdline, char * progheader) -> void
+auto usearch_global_server(char * cmdline, char * progheader, char * opt_usearch_global_server) -> void
 {
   usearch_global(cmdline, progheader, opt_usearch_global_server, true);   // skips the udb opening
 }

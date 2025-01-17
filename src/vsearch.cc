@@ -5681,7 +5681,7 @@ auto cmd_usearch_global() -> void
       fatal("Identity between 0.0 and 1.0 must be specified with --id");
     }
 
-  usearch_global(cmdline, progheader);
+  usearch_global(cmdline, progheader, opt_usearch_global);
 }
 
 // Runs on each HTTP request
@@ -5703,7 +5703,7 @@ auto ev_handler(struct mg_connection *c, int ev, void *ev_data) -> void
       if (file) {
         fprintf(file, ">search\n%s", sequence);
         fclose(file);      
-        usearch_global_server(cmdline, progheader);
+        usearch_global_server(cmdline, progheader, opt_usearch_global_server);
       } else {
         mg_http_reply(c, 500, "", "{%m:%m}\n", MG_ESC("error"), MG_ESC("Unable to open file"));   
       }

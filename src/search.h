@@ -58,6 +58,6 @@
 
 */
 
-auto usearch_global(char * cmdline, char * progheader) -> void;
-auto usearch_global_server(char * cmdline, char * progheader) -> void;
+auto usearch_global(char * cmdline, char * progheader, char * opt_usearch_global) -> void;
+auto usearch_global_server(char * cmdline, char * progheader, char * opt_usearch_global_server) -> void;
 auto search_prep(char * cmdline, char * progheader) -> void;
