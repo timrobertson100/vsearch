@@ -5697,8 +5697,10 @@ auto ev_handler(struct mg_connection *c, int ev, void *ev_data) -> void
       // TODO: Global locking here. One request at a time is fine for POC.
       
       // Extract the "sequence" parameter from the query string and write it to a file
-      char sequence[1024] = {0}; 
-      mg_http_get_var(&hm->query, "sequence", sequence, sizeof(sequence));      
+      char sequence[1024] = {0};
+      char outfmt[1024] = {0};
+      mg_http_get_var(&hm->query, "sequence", sequence, sizeof(sequence));   
+      mg_http_get_var(&hm->query, "outfmt", outfmt, sizeof(outfmt));   
       FILE *file = fopen(opt_usearch_global_server, "w+"); // replace content
       if (file) {
         fprintf(file, ">search\n%s", sequence);
@@ -5709,7 +5711,7 @@ auto ev_handler(struct mg_connection *c, int ev, void *ev_data) -> void
       }
       
       // Return the output to the user
-      FILE *fileResult = fopen(opt_blast6out, "r");
+      FILE *fileResult =  (strcmp(outfmt, "blast6out") == 0) ? fopen(opt_blast6out, "r") : fopen(opt_alnout, "r");
       if (fileResult) {
         // Determine the file size
         fseek(fileResult, 0, SEEK_END);
@@ -5721,8 +5723,8 @@ auto ev_handler(struct mg_connection *c, int ev, void *ev_data) -> void
           file_content[file_size] = '\0'; // Null-terminate the string
           fclose(fileResult);
 
-          mg_http_reply(c, 200, "Content-Type: text/html\r\n",
-                        "<pre>%s</pre>", file_content);        
+          mg_http_reply(c, 200, "Content-Type: text/plain\r\n",
+                        "%s", file_content);        
         
           free(file_content);
         }
