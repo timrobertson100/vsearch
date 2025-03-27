@@ -247,6 +247,7 @@ double opt_target_cov;
 double opt_unoise_alpha;
 double opt_weak_id;
 double opt_xn;
+int  opt_port;
 int opt_acceptall;
 int opt_alignwidth;
 int opt_chimeras_length_min;
@@ -998,6 +999,7 @@ auto args_init(int argc, char ** argv, struct Parameters & parameters) -> void
   opt_unoise_alpha = 2.0;
   opt_usearch_global = nullptr;
   opt_usearch_global_server = nullptr;
+  opt_port = 8000;
   opt_userout = nullptr;
   opt_usersort = 0;
   opt_weak_id = 10.0;
@@ -1243,6 +1245,7 @@ auto args_init(int argc, char ** argv, struct Parameters & parameters) -> void
       option_unoise_alpha,
       option_usearch_global,
       option_usearch_global_server,
+      option_port,
       option_userfields,
       option_userout,
       option_usersort,
@@ -1491,6 +1494,7 @@ auto args_init(int argc, char ** argv, struct Parameters & parameters) -> void
       {"unoise_alpha",          required_argument, nullptr, 0 },
       {"usearch_global",        required_argument, nullptr, 0 },
       {"usearch_global_server", required_argument, nullptr, 0 },
+      {"port",                  required_argument, nullptr, 0 },
       {"userfields",            required_argument, nullptr, 0 },
       {"userout",               required_argument, nullptr, 0 },
       {"usersort",              no_argument,       nullptr, 0 },
@@ -1541,6 +1545,10 @@ auto args_init(int argc, char ** argv, struct Parameters & parameters) -> void
 
         case option_usearch_global_server:
           opt_usearch_global_server = optarg;
+          break;
+
+        case option_port:
+          opt_port = args_getlong(optarg);
           break;
 
         case option_db:
@@ -4521,6 +4529,7 @@ auto args_init(int argc, char ** argv, struct Parameters & parameters) -> void
         -1 },
 
       { option_usearch_global_server,
+        option_port,
         option_alnout,
         option_band,
         option_biomout,
@@ -5742,10 +5751,21 @@ auto ev_handler(struct mg_connection *c, int ev, void *ev_data) -> void
 auto cmd_usearch_global_server() -> void
 {
    fprintf(stderr, "Starting web server\n");
-
+   if (opt_port)
+ {
+  fprintf(stdout, "Using port %d\n", opt_port);
+ }
+ // If opt_port is not set, default to 8000
+ // conditionally set port
+ char host[24];
+ if (opt_port) {
+   sprintf(host, "http://0.0.0.0:%d", opt_port);
+ } else {
+   sprintf(host, "http://0.0.0.0:%d", 8000);
+ }
    struct mg_mgr mgr;  // Declare event manager
    mg_mgr_init(&mgr);  // Initialise event manager
-   mg_http_listen(&mgr, "http://0.0.0.0:8000", ev_handler, NULL);  // Setup listener
+   mg_http_listen(&mgr, host, ev_handler, NULL);  // Setup listener
    for (;;) {          // infinite event loop
       mg_mgr_poll(&mgr, 1000);
    }    
