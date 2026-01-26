@@ -5812,25 +5812,31 @@ static void ev_handler(struct mg_connection *c,
   if (ev != MG_EV_HTTP_MSG)
     return;
 
-  bool expected = false;
-  if (!vsearch_busy.compare_exchange_strong(expected, true)) {
-    mg_http_reply(c, 503, "", "Server busy\n");
-    return;
-  }
 
   struct mg_http_message *hm = (struct mg_http_message *) ev_data;
 
   // Extract sequence parameter
-  char sequence[65536];
+  long max_sequence_length = 2048;
+  char sequence[max_sequence_length];
   char outfmt[1024];
   mg_http_get_var(&hm->query, "outfmt", outfmt, sizeof(outfmt));  
   if (mg_http_get_var(&hm->query,
                     "sequence",
                     sequence,
                     sizeof(sequence)) <= 0) {
-    mg_http_reply(c, 400, "", "Missing or too-long sequence\n");
+    mg_http_reply(c,
+              400,
+              "Content-Type: text/plain\r\n",
+              "Missing or too-long sequence (max allowed length: %ld)\n",
+              max_sequence_length);
       return;
     }
+
+  bool expected = false;
+  if (!vsearch_busy.compare_exchange_strong(expected, true)) {
+    mg_http_reply(c, 503, "", "Server busy\n");
+    return;
+  }
 
   std::string query_file;
   std::string blast6_file;
