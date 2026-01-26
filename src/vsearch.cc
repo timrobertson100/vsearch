@@ -101,7 +101,11 @@
 #include <vector>
 
 #include "mongoose.h" // basic webserver foir reusing in the global server mode
-
+#include <mutex> // std::mutex, std::lock_guard
+#include <unistd.h>
+#include <fcntl.h> 
+#include <atomic>
+#include <chrono>
 /* options */
 
 bool opt_bzip2_decompress = false;
@@ -130,6 +134,7 @@ bool opt_sizeout;
 bool opt_xee;
 bool opt_xlength;
 bool opt_xsize;
+bool opt_log_server_busy_time;;
 char * opt_allpairs_global;
 char * opt_alnout;
 char * opt_biomout;
@@ -218,6 +223,7 @@ char * opt_udbstats;
 char * opt_usearch_global;
 char * opt_usearch_global_server;
 char * opt_userout;
+char * opt_temp_file_path;
 double * opt_ee_cutoffs_values;
 double opt_abskew;
 double opt_chimeras_diff_pct;
@@ -357,6 +363,95 @@ static char progheader[80];  //   static constexpr auto max_line_length = std::s
 static char * cmdline;
 static time_t time_start;
 static time_t time_finish;
+
+static std::mutex vsearch_server_mutex; // mutex for global server mode
+
+// atomic flag to indicate if vsearch is busy processing a request
+static std::atomic<bool> vsearch_busy(false);
+
+// RAII class to set and clear the busy flag
+// NOTE: Currently redundant because the Mongoose event loop is blocking.
+// Kept intentionally to protect against future concurrency/refactors.
+struct BusyGuard {
+  std::atomic<bool>& flag;
+  std::chrono::steady_clock::time_point start;
+
+  BusyGuard(std::atomic<bool>& f)
+    : flag(f),
+      start(std::chrono::steady_clock::now()) {}
+
+  ~BusyGuard() {
+    flag.store(false);
+
+    if(opt_log_server_busy_time) {
+    auto end = std::chrono::steady_clock::now();
+    auto ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+    fprintf(stderr, "[vsearch-server] busy for %lld ms\n",
+            (long long) ms);
+    }
+  }
+};
+
+// RAII class to clean up temporary files
+struct CleanupGuard {
+  std::string query;
+  std::string blast6;
+  std::string aln;
+
+  ~CleanupGuard() {
+    if (!query.empty())  unlink(query.c_str());
+    if (!blast6.empty()) unlink(blast6.c_str());
+    if (!aln.empty())    unlink(aln.c_str());
+  }
+};
+
+static std::string write_temp_fasta(const char *sequence)
+{
+  char tmpl[PATH_MAX];
+
+  snprintf(tmpl, sizeof(tmpl),
+           "%s/vsearch-query-XXXXXX",
+           opt_temp_file_path);
+
+  int fd = mkstemp(tmpl);
+  if (fd == -1)
+    fatal("mkstemp failed for query file");
+
+  FILE *f = fdopen(fd, "w");
+  if (!f)
+    {
+      close(fd);
+      unlink(tmpl);
+      fatal("fdopen failed for query file");
+    }
+
+  fprintf(f, ">search\n%s\n", sequence);
+  fclose(f);  // also closes fd
+
+  return std::string(tmpl);
+}
+
+static std::string make_temp_output(const char *prefix)
+{
+  if (!opt_temp_file_path || !*opt_temp_file_path)
+    fatal("opt_temp_file_path not set");
+
+  char tmpl[PATH_MAX];
+
+  snprintf(tmpl, sizeof(tmpl),
+           "%s/%s-XXXXXX",
+           opt_temp_file_path,
+           prefix);
+
+  int fd = mkstemp(tmpl);
+  if (fd == -1)
+    fatal("mkstemp failed for output file");
+
+  close(fd); // vsearch will reopen by name
+  return std::string(tmpl);
+}
 
 std::FILE * fp_log = nullptr;
 
@@ -1008,6 +1103,8 @@ auto args_init(int argc, char ** argv, struct Parameters & parameters) -> void
   opt_xlength = false;
   opt_xn = 8.0;
   opt_xsize = false;
+  opt_temp_file_path = "/tmp/";
+  opt_log_server_busy_time = false;
 
   opterr = 1;
 
@@ -1246,6 +1343,8 @@ auto args_init(int argc, char ** argv, struct Parameters & parameters) -> void
       option_usearch_global,
       option_usearch_global_server,
       option_port,
+      option_temp_file_path,
+      option_log_server_busy_time,
       option_userfields,
       option_userout,
       option_usersort,
@@ -1495,6 +1594,8 @@ auto args_init(int argc, char ** argv, struct Parameters & parameters) -> void
       {"usearch_global",        required_argument, nullptr, 0 },
       {"usearch_global_server", required_argument, nullptr, 0 },
       {"port",                  required_argument, nullptr, 0 },
+      {"temp_file_path",        required_argument, nullptr, 0 },
+      {"log_server_busy_time",  no_argument,       nullptr, 0 },
       {"userfields",            required_argument, nullptr, 0 },
       {"userout",               required_argument, nullptr, 0 },
       {"usersort",              no_argument,       nullptr, 0 },
@@ -1551,6 +1652,14 @@ auto args_init(int argc, char ** argv, struct Parameters & parameters) -> void
           opt_port = args_getlong(optarg);
           break;
 
+        case option_temp_file_path:
+          opt_temp_file_path = optarg;
+          break;
+        
+        case option_log_server_busy_time:
+          opt_log_server_busy_time = true;
+          break;
+        
         case option_db:
           opt_db = optarg;
           break;
@@ -4530,6 +4639,8 @@ auto args_init(int argc, char ** argv, struct Parameters & parameters) -> void
 
       { option_usearch_global_server,
         option_port,
+        option_temp_file_path,
+        option_log_server_busy_time,
         option_alnout,
         option_band,
         option_biomout,
@@ -5694,59 +5805,115 @@ auto cmd_usearch_global() -> void
 }
 
 // Runs on each HTTP request
-auto ev_handler(struct mg_connection *c, int ev, void *ev_data) -> void
+static void ev_handler(struct mg_connection *c,
+                       int ev,
+                       void *ev_data)
 {
+  if (ev != MG_EV_HTTP_MSG)
+    return;
 
-  if (ev == MG_EV_HTTP_MSG) {
-    struct mg_http_message *hm = (struct mg_http_message *) ev_data;
-    if (mg_match(hm->uri, mg_str("/api/time/get"), NULL)) {
-      mg_http_reply(c, 200, "", "{%m:%lu}\n", MG_ESC("time"), time(NULL));
-    } else if (mg_match(hm->uri, mg_str("/search"), NULL)) {
-      
-      // TODO: Global locking here. One request at a time is fine for POC.
-      
-      // Extract the "sequence" parameter from the query string and write it to a file
-      char sequence[1024] = {0};
-      char outfmt[1024] = {0};
-      mg_http_get_var(&hm->query, "sequence", sequence, sizeof(sequence));   
-      mg_http_get_var(&hm->query, "outfmt", outfmt, sizeof(outfmt));   
-      FILE *file = fopen(opt_usearch_global_server, "w+"); // replace content
-      if (file) {
-        fprintf(file, ">search\n%s", sequence);
-        fclose(file);      
-        usearch_global_server(cmdline, progheader, opt_usearch_global_server);
-      } else {
-        mg_http_reply(c, 500, "", "{%m:%m}\n", MG_ESC("error"), MG_ESC("Unable to open file"));   
-      }
-      
-      // Return the output to the user
-      FILE *fileResult =  (strcmp(outfmt, "blast6out") == 0) ? fopen(opt_blast6out, "r") : fopen(opt_alnout, "r");
-      if (fileResult) {
-        // Determine the file size
-        fseek(fileResult, 0, SEEK_END);
-        long file_size = ftell(fileResult);
-        fseek(fileResult, 0, SEEK_SET);
-        char *file_content = (char *)malloc(file_size + 1);
-        if (file_content) {
-          fread(file_content, 1, file_size, file);
-          file_content[file_size] = '\0'; // Null-terminate the string
-          fclose(fileResult);
-
-          mg_http_reply(c, 200, "Content-Type: text/plain\r\n",
-                        "%s", file_content);        
-        
-          free(file_content);
-        }
-      } else {
-        fclose(fileResult);      
-        mg_http_reply(c, 500, "", "{%m:%m}\n", MG_ESC("error"), MG_ESC("Unable to open result file"));   
-      }
-
-    } else { 
-      mg_http_reply(c, 500, "", "{%m:%m}\n", MG_ESC("error"), MG_ESC("Unsupported URI")); 
-    }
+  bool expected = false;
+  if (!vsearch_busy.compare_exchange_strong(expected, true)) {
+    mg_http_reply(c, 503, "", "Server busy\n");
+    return;
   }
+
+  struct mg_http_message *hm = (struct mg_http_message *) ev_data;
+
+  // Extract sequence parameter
+  char sequence[65536];
+  char outfmt[1024];
+  mg_http_get_var(&hm->query, "outfmt", outfmt, sizeof(outfmt));  
+  if (mg_http_get_var(&hm->query,
+                    "sequence",
+                    sequence,
+                    sizeof(sequence)) <= 0) {
+    mg_http_reply(c, 400, "", "Missing or too-long sequence\n");
+      return;
+    }
+
+  std::string query_file;
+  std::string blast6_file;
+  std::string aln_file;
+  std::string result;
+
+  BusyGuard guard(vsearch_busy);
+
+  {
+    // 🔒 Serialize all vsearch execution
+    std::lock_guard<std::mutex> lock(vsearch_server_mutex);
+
+    // --- create per-request files ---
+    query_file  = write_temp_fasta(sequence);
+    blast6_file = make_temp_output("vsearch-blast6");
+    aln_file    = make_temp_output("vsearch-aln");
+
+    // Save original globals
+    char *old_blast6out = opt_blast6out;
+    char *old_alnout    = opt_alnout;
+
+    // Override outputs for this request
+    opt_blast6out = const_cast<char *>(blast6_file.c_str());
+    opt_alnout    = const_cast<char *>(aln_file.c_str());
+
+    // Run vsearch
+    usearch_global_server(cmdline,
+                          progheader,
+                          const_cast<char *>(query_file.c_str()));
+
+    // Restore globals
+    opt_blast6out = old_blast6out;
+    opt_alnout    = old_alnout;
+  }
+
+{
+  CleanupGuard cleanup{query_file, blast6_file, aln_file};
+
+  const char *path =
+    (strcmp(outfmt, "blast6out") == 0)
+      ? blast6_file.c_str()
+      : aln_file.c_str();
+
+  FILE *f = fopen(path, "rb");
+  if (!f) {
+    mg_http_reply(c, 500, "",
+                  "{%m:%m}\n",
+                  MG_ESC("error"),
+                  MG_ESC("Unable to open result file"));
+    return;
+  }
+
+  // Send HTTP headers manually
+  mg_printf(c,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: text/plain\r\n"
+            "Transfer-Encoding: chunked\r\n"
+            "\r\n");
+
+  char buf[4096];
+  char chunk[8192 + 64];  // data + header + CRLF
+  size_t n;
+    // Stream results in chunked encoding
+  while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
+    int hdr = snprintf(chunk, sizeof(chunk), "%zx\r\n", n);
+    memcpy(chunk + hdr, buf, n);
+    memcpy(chunk + hdr + n, "\r\n", 2);
+
+    mg_send(c, chunk, hdr + n + 2);
+
+    if (c->is_closing) break;
+  }
+
+  fclose(f);
+
+  // Final chunk (must be exact)
+  mg_send(c, "0\r\n\r\n", 5);
+
+  c->is_draining = 1;
+} // cleanup guard runs here
+
 }
+
 
 auto cmd_usearch_global_server() -> void
 {
